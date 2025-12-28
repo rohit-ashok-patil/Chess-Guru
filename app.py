@@ -43,11 +43,13 @@ with open("generated_uci_moves.txt") as f:
 index_to_uci = {i: move for i, move in enumerate(uci_moves)}
 uci_to_index = {move: i for i, move in enumerate(uci_moves)}
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cpu') # Force CPU
 
-# Load model (Optimized for 57MB file)
+# Load model inside a function or with extra care for memory
 model = MxModel(in_channels=60, n_blocks=16, n_moves=1715, channels=192)
-model.load_state_dict(torch.load("models/best_model_1_3.pth", map_location=device, weights_only=True))
+# Use weights_only=True and map to CPU
+state_dict = torch.load("models/best_model_1_3.pth", map_location=device, weights_only=True)
+model.load_state_dict(state_dict)
 model.eval()
 model.to(device)
 
@@ -174,7 +176,9 @@ def ai_move():
         move_uci = np.random.choice(top_move_ucis, p=[0.8, 0.15, 0.05][:len(top_move_ucis)])
     return jsonify({"move": uci_to_move_obj(move_uci)})
 
+with app.app_context():
+    db.create_all()
+    print("Database tables ensured.")
+
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
     app.run(debug=True)
