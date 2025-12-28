@@ -102,27 +102,39 @@ def uci_to_move_obj(uci):
     return move_obj
 
 # --- Auth Routes ---
-@app.route("/signup", methods=["POST"])
+@app.route("/signup", methods=["GET", "POST"]) # Add "GET" here
 def signup():
-    username = request.form.get('username')
-    password = request.form.get('password')
-    if User.query.filter_by(username=username).first():
-        return "Username exists", 400
-    new_user = User(username=username, password=generate_password_hash(password, method='pbkdf2:sha256'))
-    db.session.add(new_user)
-    db.session.commit()
-    login_user(new_user)
+    if request.method == "POST":
+        username = request.form.get('username')
+        password = request.form.get('password')
+        
+        if User.query.filter_by(username=username).first():
+            return "Username already exists", 400
+        
+        hashed_pw = generate_password_hash(password, method='pbkdf2:sha256')
+        new_user = User(username=username, password=hashed_pw)
+        db.session.add(new_user)
+        db.session.commit()
+        login_user(new_user)
+        return redirect(url_for('index'))
+    
+    # If someone tries to visit /signup via GET (typing in URL), send them home
     return redirect(url_for('index'))
 
-@app.route("/login", methods=["POST"])
+@app.route("/login", methods=["GET", "POST"]) # Add "GET" here
 def login():
-    username = request.form.get('username')
-    password = request.form.get('password')
-    user = User.query.filter_by(username=username).first()
-    if user and check_password_hash(user.password, password):
-        login_user(user)
-        return redirect(url_for('index'))
-    return "Invalid credentials", 401
+    if request.method == "POST":
+        username = request.form.get('username')
+        password = request.form.get('password')
+        user = User.query.filter_by(username=username).first()
+        
+        if user and check_password_hash(user.password, password):
+            login_user(user)
+            return redirect(url_for('index'))
+        return "Invalid credentials", 401
+    
+    # If someone tries to visit /login via GET, send them home
+    return redirect(url_for('index'))
 
 @app.route("/logout")
 def logout():
