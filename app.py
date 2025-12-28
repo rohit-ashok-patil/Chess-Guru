@@ -5,6 +5,7 @@ import torch
 import numpy as np
 import random
 import chess.engine
+import gc
 from flask import Flask, request, jsonify, render_template, redirect, url_for
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
@@ -43,15 +44,25 @@ with open("generated_uci_moves.txt") as f:
 index_to_uci = {i: move for i, move in enumerate(uci_moves)}
 uci_to_index = {move: i for i, move in enumerate(uci_moves)}
 
-device = torch.device('cpu') # Force CPU
+device = torch.device('cpu') # Force CPU for Render Free Tier
 
-# Load model inside a function or with extra care for memory
-model = MxModel(in_channels=60, n_blocks=16, n_moves=1715, channels=192)
-# Use weights_only=True and map to CPU
-state_dict = torch.load("models/best_model_1_3.pth", map_location=device, weights_only=True)
-model.load_state_dict(state_dict)
-model.eval()
-model.to(device)
+# GLOBAL MODEL POINTER (Lazy Loading to prevent Timeout)
+model = None
+
+def get_model():
+    global model
+    if model is None:
+        print("Loading model into memory...")
+        model = MxModel(in_channels=60, n_blocks=16, n_moves=1715, channels=192)
+        state_dict = torch.load("models/best_model_1_3.pth", map_location=device, weights_only=True)
+        model.load_state_dict(state_dict)
+        model.eval()
+        model.to(device)
+        # Clear memory
+        del state_dict
+        gc.collect()
+        print("Model loaded successfully.")
+    return model
 
 # --- Stockfish Setup (Linux/Render Compatible) ---
 STOCKFISH_PATH = os.path.join(os.getcwd(), "stockfish/stockfish-ubuntu-x86-64-avx2")
@@ -62,7 +73,7 @@ if os.name == 'posix' and os.path.exists(STOCKFISH_PATH):
     st = os.stat(STOCKFISH_PATH)
     os.chmod(STOCKFISH_PATH, st.st_mode | stat.S_IEXEC)
 
-def get_stockfish_eval(fen, multipv=1, depth=15):
+def get_stockfish_eval(fen, multipv=1, depth=12): # Lowered depth slightly for speed
     try:
         with chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH) as engine:
             board = chess.Board(fen)
@@ -76,14 +87,16 @@ def get_stockfish_eval(fen, multipv=1, depth=15):
                 results.append({"move": move, "score": score})
             return results
     except Exception as e:
+        print(f"Stockfish error: {e}")
         return [{"move": None, "score": 0}]
 
 def model_policy_top_moves(board, top_n=3):
     try:
+        current_model = get_model() # Load/Get model
         tensor = fen_to_maia2_tensor(board.fen())
         x = torch.tensor(np.transpose(tensor, (2, 0, 1))[None, ...], dtype=torch.float32).to(device)
         with torch.no_grad():
-            policy_output = model(x)
+            policy_output = current_model(x)
             if isinstance(policy_output, tuple): policy_output = policy_output[0]
             probs = torch.softmax(policy_output, dim=1).cpu().numpy().flatten()
         
@@ -95,7 +108,8 @@ def model_policy_top_moves(board, top_n=3):
         legal_probs.sort(key=lambda x: x[1], reverse=True)
         top_moves = legal_probs[:min(top_n, len(legal_probs))]
         return [index_to_uci[idx] for idx, _ in top_moves], [float(prob) for _, prob in top_moves]
-    except:
+    except Exception as e:
+        print(f"Model error: {e}")
         return [], []
 
 def uci_to_move_obj(uci):
@@ -104,38 +118,31 @@ def uci_to_move_obj(uci):
     return move_obj
 
 # --- Auth Routes ---
-@app.route("/signup", methods=["GET", "POST"]) # Add "GET" here
+@app.route("/signup", methods=["GET", "POST"])
 def signup():
     if request.method == "POST":
         username = request.form.get('username')
         password = request.form.get('password')
-        
         if User.query.filter_by(username=username).first():
             return "Username already exists", 400
-        
         hashed_pw = generate_password_hash(password, method='pbkdf2:sha256')
         new_user = User(username=username, password=hashed_pw)
         db.session.add(new_user)
         db.session.commit()
         login_user(new_user)
         return redirect(url_for('index'))
-    
-    # If someone tries to visit /signup via GET (typing in URL), send them home
     return redirect(url_for('index'))
 
-@app.route("/login", methods=["GET", "POST"]) # Add "GET" here
+@app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         username = request.form.get('username')
         password = request.form.get('password')
         user = User.query.filter_by(username=username).first()
-        
         if user and check_password_hash(user.password, password):
             login_user(user)
             return redirect(url_for('index'))
         return "Invalid credentials", 401
-    
-    # If someone tries to visit /login via GET, send them home
     return redirect(url_for('index'))
 
 @app.route("/logout")
@@ -172,10 +179,10 @@ def ai_move():
         legal_moves = list(board.legal_moves)
         move_uci = random.choice(legal_moves).uci() if legal_moves else None
     else:
-        # Use simple weighted random selection
         move_uci = np.random.choice(top_move_ucis, p=[0.8, 0.15, 0.05][:len(top_move_ucis)])
     return jsonify({"move": uci_to_move_obj(move_uci)})
 
+# Ensure DB tables are created before starting
 with app.app_context():
     db.create_all()
     print("Database tables ensured.")
