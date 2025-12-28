@@ -1,18 +1,9 @@
---find-links https://download.pytorch.org/whl/cpu
-torch==2.2.0+cpu 
-chess
-torchvision
-numpy
-pandas
-python-chess
-tqdm
-matplotlib
-scikit-learn
-requests
-bz2file
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.0
 flask
 flask-sqlalchemy
 flask-login
+numpy
 chess
 gunicorn
 psycopg2-binary
