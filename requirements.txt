@@ -1,7 +1,15 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.2.0
-numpy<2.0.0
+numpy<2.0.0 
+chess
+torchvision
 pandas
+python-chess
+tqdm
+matplotlib
+scikit-learn
+requests
+bz2file
 flask
 flask-sqlalchemy
 flask-login
