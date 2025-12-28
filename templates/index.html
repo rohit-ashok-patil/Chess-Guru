@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Chess Guru AI</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css"/>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #2c3e50; color: white; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .nav-bar { width: 100%; max-width: 900px; display: flex; justify-content: space-between; background: #34495e; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        #container { display: flex; gap: 20px; align-items: flex-start; }
+        #board { width: 450px; box-shadow: 0 8px 25px rgba(0,0,0,0.5); }
+        #eval-bar-container { width: 30px; height: 450px; background: #ccc; position: relative; border-radius: 4px; }
+        #eval-bar { width: 100%; position: absolute; bottom: 0; background: linear-gradient(to top, #222 0%, #fff 100%); transition: height 0.5s; }
+        #sidebar { background: #34495e; padding: 20px; border-radius: 8px; width: 300px; }
+        .move-li { background: #2c3e50; margin: 5px 0; padding: 10px; border-radius: 4px; border-left: 4px solid #27ae60; list-style: none; font-size: 0.9em; }
+        .auth-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+        .auth-box { background: white; color: #333; padding: 40px; border-radius: 12px; width: 300px; text-align: center; }
+        .auth-box input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        .auth-box button { width: 100%; padding: 10px; background: #27ae60; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+    {% if not current_user.is_authenticated %}
+    <div class="auth-overlay">
+        <div class="auth-box" id="login-section">
+            <h2>Login</h2>
+            <form action="/login" method="POST">
+                <input type="text" name="username" placeholder="Username" required>
+                <input type="password" name="password" placeholder="Password" required>
+                <button type="submit">Play Chess</button>
+            </form>
+            <p onclick="toggleAuth()" style="color: blue; cursor: pointer; font-size: 0.8em; margin-top: 15px;">New? Sign up here</p>
+        </div>
+        <div class="auth-box hidden" id="signup-section">
+            <h2>Sign Up</h2>
+            <form action="/signup" method="POST">
+                <input type="text" name="username" placeholder="Username" required>
+                <input type="password" name="password" placeholder="Password" required>
+                <button type="submit" style="background: #2980b9;">Register</button>
+            </form>
+            <p onclick="toggleAuth()" style="color: blue; cursor: pointer; font-size: 0.8em; margin-top: 15px;">Back to Login</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="nav-bar">
+        <span><b>Chess Guru AI</b> | {{ current_user.username if current_user.is_authenticated else 'Guest' }}</span>
+        {% if current_user.is_authenticated %}<a href="/logout" style="color: #e74c3c; text-decoration: none;">Logout</a>{% endif %}
+    </div>
+
+    <div id="container">
+        <div id="eval-bar-container"><div id="eval-bar" style="height:50%"></div></div>
+        <div id="board"></div>
+        <div id="sidebar">
+            <h3>AI Analysis</h3>
+            <ul id="moves-list"><li>Loading analysis...</li></ul>
+            <button id="next-move-btn" style="width: 100%; padding: 15px; background: #e67e22; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">AI Make Move</button>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+    <script>
+        var board = null;
+        var game = new Chess();
+
+        function toggleAuth() {
+            document.getElementById('login-section').classList.toggle('hidden');
+            document.getElementById('signup-section').classList.toggle('hidden');
+        }
+
+        function updateEvalBar(score) {
+            let percent = Math.max(0, Math.min(100, ((score + 1000) / 2000) * 100));
+            document.getElementById('eval-bar').style.height = percent + "%";
+        }
+
+        async function fetchAnalysis() {
+            let res = await fetch("/get_top_moves", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({fen: game.fen()})
+            });
+            let data = await res.json();
+            let list = document.getElementById('moves-list');
+            list.innerHTML = "";
+            data.top_moves.forEach((move, i) => {
+                let li = document.createElement('li');
+                li.className = "move-li";
+                li.innerHTML = `<b>${move}</b> | SF: ${(data.move_evals[i].score/100).toFixed(1)} | Prob: ${(data.move_evals[i].probability*100).toFixed(1)}%`;
+                list.appendChild(li);
+            });
+            updateEvalBar(data.board_eval);
+            window.topMoves = data.top_moves;
+        }
+
+        function onDrop (source, target) {
+            var move = game.move({from: source, to: target, promotion: 'q'});
+            if (move === null) return 'snapback';
+            board.position(game.fen());
+            fetchAnalysis();
+        }
+
+        document.getElementById('next-move-btn').onclick = async function() {
+            let res = await fetch("/ai_move", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({fen: game.fen()})
+            });
+            let data = await res.json();
+            if (data.move) {
+                game.move(data.move);
+                board.position(game.fen());
+                fetchAnalysis();
+            }
+        };
+
+        board = Chessboard('board', {
+            draggable: true,
+            position: 'start',
+            onDrop: onDrop,
+            pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
+        });
+        fetchAnalysis();
+    </script>
+</body>
+</html>
